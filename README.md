@@ -1,3 +1,20 @@
+---
+title: Sql Query Debugger
+emoji: 🔍
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: true
+tags:
+  - openenv
+  - reinforcement-learning
+  - sql
+  - debugging
+  - real-world
+license: mit
+---
+
+
 # SQL Query Debugger — OpenEnv Environment
 
 > **META × PyTorch × SST OpenEnv Hackathon** | Round 1 | March 28 – April 5, 2025
