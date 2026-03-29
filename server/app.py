@@ -1,6 +1,10 @@
 # server/app.py — required by OpenEnv validator
-# This imports and re-exports the main FastAPI app
-
+import uvicorn
 from api.server import app
 
-__all__ = ["app"]
+def main():
+    """Main entry point required by OpenEnv validator."""
+    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
