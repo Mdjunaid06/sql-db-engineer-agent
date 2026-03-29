@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "sql-query-debugger"
+version = "1.0.0"
+description = "OpenEnv-compliant RL environment for SQL query debugging"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi==0.135.2",
+    "uvicorn==0.42.0",
+    "pydantic==2.12.5",
+    "openai==2.30.0",
+    "python-dotenv==1.2.2",
+    "pytest==9.0.2",
+    "huggingface_hub==1.8.0",
+]
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/junaid0600/sql-query-debugger"
+Repository = "https://github.com/Mdjunaid06/SQL-QUERY-DEBUGGER"
+
+[tool.openenv]
+name = "sql-query-debugger"
+version = "1.0.0"
+entry_point = "api.server:app"
+inference = "inference.py"
