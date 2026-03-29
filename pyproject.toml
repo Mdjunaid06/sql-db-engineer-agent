@@ -15,14 +15,12 @@ dependencies = [
     "python-dotenv==1.2.2",
     "pytest==9.0.2",
     "huggingface_hub==1.8.0",
+    "openenv-core>=0.2.0",
 ]
+
+[project.scripts]
+server = "inference:main"
 
 [project.urls]
 Homepage = "https://huggingface.co/spaces/junaid0600/sql-query-debugger"
 Repository = "https://github.com/Mdjunaid06/SQL-QUERY-DEBUGGER"
-
-[tool.openenv]
-name = "sql-query-debugger"
-version = "1.0.0"
-entry_point = "api.server:app"
-inference = "inference.py"
