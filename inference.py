@@ -26,6 +26,9 @@ if HF_TOKEN is None:
     raise ValueError("HF_TOKEN environment variable is required")
 
 API_KEY = HF_TOKEN
+BENCHMARK    = "sql-query-debugger"
+MAX_STEPS    = 10
+SUCCESS_SCORE_THRESHOLD = 0.5
 # ─────────────────────────────────────────────
 
 def log_start(task: str, env: str, model: str) -> None:
