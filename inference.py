@@ -14,40 +14,26 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 from env.environment import SQLDebuggerEnvironment
-from env.models import Action, ActionType, DifficultyLevel
-
 # ─────────────────────────────────────────────
 #  ENVIRONMENT VARIABLES
 # ─────────────────────────────────────────────
-API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or "dummy-key"
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-BENCHMARK    = "sql-query-debugger"
-MAX_STEPS    = 10
-SUCCESS_SCORE_THRESHOLD = 0.5
+HF_TOKEN     = os.getenv("HF_TOKEN")
 
-# ─────────────────────────────────────────────
-#  LOGGING FUNCTIONS — exact format required
+if HF_TOKEN is None:
+    raise ValueError("HF_TOKEN environment variable is required")
+
+API_KEY = HF_TOKEN
 # ─────────────────────────────────────────────
 
 def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
-    error_val = error if error else "null"
-    done_val  = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
-
-
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
-
-
-# ─────────────────────────────────────────────
-#  SYSTEM PROMPT
-# ─────────────────────────────────────────────
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
 
 SYSTEM_PROMPT = textwrap.dedent("""
     You are an expert SQL debugger. You will be given a buggy SQL query and must fix it.
