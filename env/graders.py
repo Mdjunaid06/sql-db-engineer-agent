@@ -161,7 +161,7 @@ def grade_easy(action: Action, ground_truth: dict) -> tuple[float, dict, str]:
         feedback_parts.append("Fix is incorrect or not provided.")
 
     score += fix_score
-    breakdown["fix_correctness"] = round(fix_score, 4)
+    breakdown["fix_correctness"] = round(max(min(fix_score, 0.999), 0.001), 4)
 
     # ── 2. Error location (0.15) ─────────────────────────────────
     submitted_location = _safe_get(payload, "error_location", "")
@@ -240,7 +240,7 @@ def grade_medium(action: Action, ground_truth: dict) -> tuple[float, dict, str]:
         feedback_parts.append("Fix is incorrect or missing.")
 
     score += fix_score
-    breakdown["fix_correctness"] = round(fix_score, 4)
+    breakdown["fix_correctness"] = round(max(min(fix_score, 0.999), 0.001), 4)
 
     # ── 2. Identifies the logic flaw (0.20) ──────────────────────
     explanation = str(_safe_get(payload, "explanation", "") or _safe_get(payload, "change_made", "") or "")
