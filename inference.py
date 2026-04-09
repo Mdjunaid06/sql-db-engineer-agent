@@ -204,7 +204,7 @@ def run_episode(client: OpenAI, difficulty: str, task_id: str) -> dict:
                 done   = resp.done
                 obs    = resp.observation
             except Exception as e:
-                reward    = 0.01
+                reward    = 0.1
                 done      = False
                 error_str = str(e)[:100]
 
@@ -225,7 +225,7 @@ def run_episode(client: OpenAI, difficulty: str, task_id: str) -> dict:
         # Score strictly between 0 and 1 exclusive
         if rewards:
             total_reward = sum(rewards)
-            raw_score    = total_reward / len(rewards)
+            raw_score = max(0.1, total_reward / len(rewards))
         else:
             raw_score = 0.1
 
