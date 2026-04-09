@@ -197,7 +197,7 @@ def grade_easy(action: Action, ground_truth: dict) -> tuple[float, dict, str]:
     # ── 6. Hint penalty ──────────────────────────────────────────
     # Hint penalty is applied in reward.py, not here
 
-    final_score = round(min(score, 1.0), 4)
+    final_score = round(min(score, 0.999), 4)
     feedback    = " ".join(feedback_parts) if feedback_parts else "No valid response provided."
     return final_score, breakdown, feedback
 
@@ -288,7 +288,7 @@ def grade_medium(action: Action, ground_truth: dict) -> tuple[float, dict, str]:
     else:
         breakdown["impact_analysis"] = 0.0
 
-    final_score = round(min(score, 1.0), 4)
+    final_score = round(min(score, 0.999), 4)
     feedback    = " ".join(feedback_parts) if feedback_parts else "No valid response provided."
     return final_score, breakdown, feedback
 
@@ -399,7 +399,7 @@ def grade_hard(action: Action, ground_truth: dict) -> tuple[float, dict, str]:
 
     # Hard cap: frontier model should score ~0.10-0.20
     # We do NOT artificially cap — the rubric naturally produces low scores
-    final_score = round(min(score, 1.0), 4)
+    final_score = round(min(score, 0.999), 4)
     feedback    = " ".join(feedback_parts) if feedback_parts else "Performance issue not identified."
     return final_score, breakdown, feedback
 
