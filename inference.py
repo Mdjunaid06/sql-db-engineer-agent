@@ -172,7 +172,7 @@ def run_episode(client: OpenAI, difficulty: str, task_id: str) -> dict:
     rewards  = []
     steps    = 0
     success  = False
-    score    = 0.0
+    score    = 0.001  # Initialize to minimum valid score
 
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
