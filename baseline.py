@@ -187,13 +187,10 @@ def run_baseline() -> BaselineResponse:
     Returns BaselineResponse with scores for all 3 tasks.
     Must complete within 60 seconds.
     """
-    # Check API key exists (even if rule-based agent doesn't use it,
-    # the spec requires it to be validated)
     try:
         _check_api_key()
     except ValueError as e:
         print(f"Warning: {e}")
-        # Continue with rule-based agent anyway for demo
 
     results     = []
     difficulties = [
@@ -212,25 +209,28 @@ def run_baseline() -> BaselineResponse:
             score, steps, feedback = _rule_based_agent(env, task_context)
             elapsed      = time.time() - start
 
+            # FIX 1: clamp score strictly between 0 and 1 exclusive
+            safe_score = round(max(0.001, min(0.999, float(score))), 4)
+
             results.append(BaselineResult(
                 task_id    = task_id,
                 difficulty = difficulty,
-                score      = round(score, 4),
+                score      = safe_score,
                 steps      = steps,
                 feedback   = f"{feedback} (elapsed: {elapsed:.2f}s)"
             ))
-            print(f"Baseline {difficulty.value}: score={round(score,4)}, steps={steps}")
+            print(f"Baseline {difficulty.value}: score={safe_score}, steps={steps}")
 
         except Exception as e:
             results.append(BaselineResult(
                 task_id    = task_id,
                 difficulty = difficulty,
-                score      = 0.0,
+                score      = 0.001,  # FIX 2: was 0.0, which is an invalid boundary value
                 steps      = 0,
                 feedback   = f"Error: {str(e)}"
             ))
 
-    avg = round(sum(r.score for r in results) / len(results), 4) if results else 0.0
+    avg = round(sum(r.score for r in results) / len(results), 4) if results else 0.5
     print(f"Baseline average score: {avg}")
 
     return BaselineResponse(results=results, average_score=avg)

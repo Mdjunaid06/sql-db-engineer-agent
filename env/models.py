@@ -174,6 +174,11 @@ class BaselineResult(BaseModel):
     steps:      int
     feedback:   str
 
+    @field_validator("score")
+    @classmethod
+    def clamp_score(cls, v):
+        return max(0.001, min(0.999, round(float(v), 4)))
+
 class BaselineResponse(BaseModel):
     results:      list[BaselineResult]
     average_score: float
