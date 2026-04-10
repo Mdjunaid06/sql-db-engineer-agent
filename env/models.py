@@ -97,7 +97,7 @@ class Reward(BaseModel):
     @field_validator("score")
     @classmethod
     def clamp_score(cls, v):
-        return max(-1.0, min(1.0, round(v, 4)))
+        return max(0.001, min(0.999, round(v, 4)))
 
     model_config = {"json_schema_extra": {
         "example": {

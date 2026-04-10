@@ -96,11 +96,10 @@ def compute_reward(
     # ── Edge case: null action ────────────────────────────────────
     if action is None or action.payload is None:
         return Reward(
-            score=-0.1,
-            breakdown={"invalid_action": -0.1},
-            feedback="Invalid or null action received. Penalty applied."
+            score=0.001,
+            breakdown={"invalid_action": 0.001},
+            feedback="Invalid or null action received."
         )
-
     action_type_val = action.action_type.value if hasattr(action.action_type, "value") else str(action.action_type)
     action_type_enum = action.action_type
 
@@ -170,7 +169,8 @@ def compute_reward(
         feedback_parts.append("Approaching max steps limit. Penalty applied.")
 
     # ── Clamp to [-1.0, 1.0] ─────────────────────────────────────
-    final_score = round(max(-1.0, min(1.0, final_score)), 4)
+    # Clamp strictly between 0.001 and 0.999 for validator compliance
+    final_score = round(max(0.001, min(0.999, final_score)), 4)
     breakdown["total"] = final_score
 
     feedback = " ".join(feedback_parts) if feedback_parts else "Step processed."
