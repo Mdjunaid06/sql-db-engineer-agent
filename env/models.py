@@ -185,9 +185,14 @@ class GraderRequest(BaseModel):
     episode:  Optional[dict]   = None
 
 class GraderResponse(BaseModel):
-    score:    float
+    score:    float = Field(..., gt=0.0, lt=1.0)
     feedback: str
     breakdown: dict
+
+    @field_validator("score")
+    @classmethod
+    def clamp_score(cls, v):
+        return max(0.001, min(0.999, round(v, 4)))
 
 class HealthResponse(BaseModel):
     status:  str = "ok"

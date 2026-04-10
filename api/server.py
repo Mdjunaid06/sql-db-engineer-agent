@@ -191,17 +191,19 @@ async def tasks():
 async def grader(request: GraderRequest):
     """
     Grades a completed episode action.
-    Returns float score 0.0-1.0. Never crashes.
-    Edge cases: null action → 0.0, unknown task → 0.0.
+    Returns float score strictly between 0.0 and 1.0 exclusive.
+    Never crashes.
     """
     try:
         if request.action is None:
             return GraderResponse(
-                score     = 0.0,
+                score     = 0.001,
                 feedback  = "No action provided for grading.",
                 breakdown = {"error": "null_action"}
             )
         score, breakdown, feedback = grade(request.action, request.task_id)
+        # Clamp strictly between 0 and 1 exclusive
+        score = max(0.001, min(0.999, score))
         return GraderResponse(
             score     = score,
             feedback  = feedback,
@@ -209,11 +211,10 @@ async def grader(request: GraderRequest):
         )
     except Exception as e:
         return GraderResponse(
-            score     = 0.0,
+            score     = 0.001,
             feedback  = f"Grader error: {str(e)}",
             breakdown = {"error": str(e)}
         )
-
 
 # ─────────────────────────────────────────────
 #  7. /baseline — POST
