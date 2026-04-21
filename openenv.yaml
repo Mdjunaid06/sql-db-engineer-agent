@@ -1,9 +1,11 @@
-name: sql-query-debugger
-version: '1.0.0'
-description: 'An OpenEnv environment where AI agents learn to debug SQL queries across syntax errors, logic bugs, and performance issues'
-tags: [openenv, real-world, sql, debugging, performance, reinforcement-learning]
+name: sql-db-engineer-agent
+version: '2.0.0'
+description: 'SQL Database Engineer Agent — An OpenEnv environment where AI agents learn to act like senior database engineers. Evolved from SQL Query Debugger (Round 1). Agents manage production databases over 50+ steps: inspecting slow queries, creating indexes, rewriting queries, partitioning tables.'
+tags: [openenv, real-world, sql, database, engineering, indexing, reinforcement-learning, long-horizon, world-modeling, self-improvement, wildcard]
 
 tasks:
+  # ── Round 1: SQL Query Debugger (15 tasks — backward compatible) ──
+
   - id: easy_001
     difficulty: easy
     description: 'Fix SQL syntax error: missing commas in SELECT clause'
@@ -64,6 +66,68 @@ tasks:
     difficulty: hard
     description: 'Fix window function misuse with missing PARTITION BY and ORDER BY'
 
+  # ── Round 2: DB Engineering Scenarios (15 tasks — long-horizon) ──
+
+  - id: easy_s001
+    difficulty: easy
+    description: 'User lookup query taking 2s on 10K users table — add email index'
+
+  - id: easy_s002
+    difficulty: easy
+    description: 'Order status query scanning 50K orders — composite index needed'
+
+  - id: easy_s003
+    difficulty: easy
+    description: 'Product search doing full table scan on 20K products'
+
+  - id: easy_s004
+    difficulty: easy
+    description: 'Session lookup hitting 15K sessions without index'
+
+  - id: easy_s005
+    difficulty: easy
+    description: 'Log table filter slow on 30K entries — compound index fix'
+
+  - id: medium_s001
+    difficulty: medium
+    description: 'E-commerce DB: 50K orders + 8K users, two slow queries'
+
+  - id: medium_s002
+    difficulty: medium
+    description: 'Blog platform: 100K posts + 20K authors, search and lookup slow'
+
+  - id: medium_s003
+    difficulty: medium
+    description: 'Inventory: 80K products + 200K stock movements, rewrite + index'
+
+  - id: medium_s004
+    difficulty: medium
+    description: 'Ticketing system: 60K tickets + 5K agents, status queue slow'
+
+  - id: medium_s005
+    difficulty: medium
+    description: 'Analytics DB: 150K events + 10K users, funnel query slow'
+
+  - id: hard_s001
+    difficulty: hard
+    description: 'Financial DB: 500K transactions across 4 tables, 3 slow queries'
+
+  - id: hard_s002
+    difficulty: hard
+    description: 'SaaS platform: 8-table schema, 200K+ records, dashboard 20s+'
+
+  - id: hard_s003
+    difficulty: hard
+    description: 'Healthcare: 1M patient records, compliance + clinical queries'
+
+  - id: hard_s004
+    difficulty: hard
+    description: 'Gaming leaderboard: 2M players, 5M matches, ranking degraded'
+
+  - id: hard_s005
+    difficulty: hard
+    description: 'Logistics: 6 tables, 3M shipments + 10M tracking records'
+
 action_space:
   type: discrete
   actions:
@@ -73,6 +137,15 @@ action_space:
     - request_hint
     - explain_issue
     - optimize_query
+    - inspect_query
+    - analyze_indexes
+    - create_index
+    - rewrite_query
+    - add_column
+    - drop_index
+    - partition_table
+    - analyze_statistics
+    - submit_report
 
 observation_space:
   type: dict
@@ -85,16 +158,21 @@ observation_space:
     - max_steps
     - hints_used
     - previous_actions
+    - metadata
 
 reward:
-  min: -1.0
-  max: 1.0
-  type: dense
-  description: 'Dense reward signal at every step. Partial credit for identification, fixing, and explanation quality.'
+  min: 0.001
+  max: 0.999
+  type: dense_with_milestones
+  description: >
+    Dense reward at every step.
+    Round 1: partial credit for identification, fixing, explanation quality.
+    Round 2: step reward + delta reward (DB performance change) +
+    milestone bonuses at 25%/50%/75% improvement + terminal score.
 
 episode:
-  max_steps: 20
-  termination: 'submit_answer or optimize_query action, or max_steps reached'
+  max_steps: 50
+  termination: 'submit_report, submit_answer, optimize_query, or max_steps reached'
 
 api:
   port: 7860
@@ -106,3 +184,4 @@ api:
     - GET  /tasks
     - POST /grader
     - POST /baseline
+    - GET  /progress
