@@ -1,7 +1,22 @@
+# ── Core API dependencies ─────────────────────────────────
 fastapi==0.135.2
 uvicorn==0.42.0
 pydantic==2.12.5
 openai==2.30.0
 python-dotenv==1.2.2
-pytest==9.0.2
 huggingface_hub==1.8.0
+
+# ── Testing ───────────────────────────────────────────────
+pytest==9.0.2
+
+# ── OpenEnv validator ─────────────────────────────────────
+openenv-core>=0.2.0
+
+# ── Round 2: Training pipeline ────────────────────────────
+matplotlib>=3.7.0
+requests>=2.31.0
+datasets>=2.14.0
+
+# ── Round 2: Training (GPU only — venue machine) ──────────
+# Install these ONLY on venue GPU machine:
+# pip install unsloth trl transformers accelerate bitsandbytes
