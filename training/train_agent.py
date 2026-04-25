@@ -13,10 +13,8 @@ FIXES applied:
 import os
 import re
 import json
-import warnings
 import requests
 from datasets import Dataset
-from collections import defaultdict
 
 # ── Try importing Unsloth (GPU only) ─────────────────────────
 try:
@@ -35,7 +33,6 @@ ENV_URL    = os.getenv("ENV_URL",    "https://junaid0600-sql-db-engineer-agent.h
 HF_TOKEN   = os.getenv("HF_TOKEN",  "")
 MODEL_NAME = os.getenv("MODEL_NAME", "unsloth/Qwen2.5-7B-Instruct")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./sdea-trained")
-MAX_STEPS  = int(os.getenv("MAX_STEPS", "50"))
 
 # Valid Round 2 action types — model must use one of these
 VALID_ACTION_TYPES = {
@@ -44,9 +41,6 @@ VALID_ACTION_TYPES = {
     "partition_table", "analyze_statistics",
     "request_hint", "submit_report",
 }
-
-_last_reward_by_task = {}
-_scenario_hits = defaultdict(int)
 
 SYSTEM_PROMPT = """You are a senior database engineer.
 Given a database scenario with slow queries, choose the BEST single action to improve performance.
@@ -66,22 +60,6 @@ Examples:
 {"action_type": "create_index", "payload": {"table": "users", "columns": ["email"]}}
 {"action_type": "create_index", "payload": {"table": "orders", "columns": ["user_id", "status"]}}
 {"action_type": "submit_report", "payload": {"summary": "Added composite index on orders(user_id, status). Performance improved from 5.0 to 85.0."}}"""
-
-
-def _configure_warning_filters() -> None:
-    """
-    Suppress noisy upstream deprecation warnings that do not affect training
-    correctness right now. Keep real runtime errors visible.
-    """
-    filters = [
-        r"Passing `generation_config` together with generation-related arguments",
-        r"Both `max_new_tokens` \(=.+\) and `max_length`\(.+\) seem to have been set",
-        r"The attention mask API under `transformers\.modeling_attn_mask_utils`",
-        r"`use_return_dict` is deprecated! Use `return_dict` instead!",
-    ]
-    for message in filters:
-        warnings.filterwarnings("ignore", message=message, category=FutureWarning)
-        warnings.filterwarnings("ignore", message=message, category=UserWarning)
 
 
 # ─────────────────────────────────────────────
@@ -109,76 +87,41 @@ def _extract_json(text: str) -> dict | None:
     except json.JSONDecodeError:
         pass
 
-    # Try 2: scan for JSON object starts and raw-decode from each "{"
-    # This handles nested objects/arrays better than regex-only extraction.
-    decoder = json.JSONDecoder()
-    brace_positions = [m.start() for m in re.finditer(r"\{", text)]
-    for pos in brace_positions:
-        try:
-            obj, _ = decoder.raw_decode(text[pos:])
-            if isinstance(obj, dict) and "action_type" in obj:
-                return obj
-        except Exception:
-            continue
-
-    # Try 3: greedy — find first { to last }
-    start = text.find("{")
-    end   = text.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            obj = json.loads(text[start:end + 1])
-            if isinstance(obj, dict) and "action_type" in obj:
-                return obj
-        except json.JSONDecodeError:
-            pass
+    # Try 2: balanced-brace scan from every opening '{'
+    # This handles nested payload objects/arrays more reliably than regex.
+    starts = [idx for idx, ch in enumerate(text) if ch == "{"]
+    for start in starts:
+        depth = 0
+        in_str = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start:i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict) and "action_type" in obj:
+                            return obj
+                    except json.JSONDecodeError:
+                        pass
+                    break
 
     return None
-
-
-def _recover_action_from_text(text: str) -> dict | None:
-    """
-    Heuristic fallback when strict JSON parse fails.
-    Helps GRPO get useful gradient instead of all-invalid outputs.
-    """
-    if not text:
-        return None
-
-    action_match = re.search(
-        r"(inspect_query|analyze_indexes|create_index|rewrite_query|add_column|drop_index|partition_table|analyze_statistics|request_hint|submit_report)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if not action_match:
-        return None
-
-    action_type = action_match.group(1).lower()
-    payload = {}
-
-    query_match = re.search(r"\bq\d+\b", text, flags=re.IGNORECASE)
-    table_match = re.search(
-        r"\b(users|orders|products|sessions|logs|tickets|events|posts|authors|transactions|accounts|customers|audit_log|workspaces|projects|tasks|comments|attachments|activity_log|notifications|patients|appointments|prescriptions|clinical_notes|players|matches|leaderboards|achievements|shipments|routes|drivers|vehicles|warehouses|tracking)\b",
-        text,
-        flags=re.IGNORECASE,
-    )
-    cols_match = re.search(r"\[(.*?)\]", text, flags=re.DOTALL)
-
-    if action_type == "inspect_query":
-        payload["query_id"] = query_match.group(0) if query_match else "q1"
-    elif action_type in {"analyze_indexes", "partition_table", "analyze_statistics"}:
-        payload["table"] = table_match.group(1) if table_match else "orders"
-    elif action_type == "create_index":
-        payload["table"] = table_match.group(1) if table_match else "orders"
-        if cols_match:
-            cols = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", cols_match.group(1))
-            payload["columns"] = cols[:4] if cols else ["user_id", "status"]
-        else:
-            payload["columns"] = ["user_id", "status"]
-    elif action_type == "submit_report":
-        payload["summary"] = "Applied index and query optimization recommendations."
-    else:
-        payload = {}
-
-    return {"action_type": action_type, "payload": payload}
 
 
 def _is_valid_action(action: dict) -> bool:
@@ -192,6 +135,37 @@ def _is_valid_action(action: dict) -> bool:
     if "payload" not in action or not isinstance(action.get("payload"), dict):
         return False
     return True
+
+
+def _completion_to_text(completion) -> str:
+    """
+    Normalize TRL completion formats into raw text.
+    Handles dict/list/string and content blocks emitted by some chat templates.
+    """
+    if isinstance(completion, str):
+        return completion
+
+    if isinstance(completion, dict):
+        content = completion.get("content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks = []
+            for block in content:
+                if isinstance(block, dict):
+                    chunks.append(str(block.get("text", "")))
+                else:
+                    chunks.append(str(block))
+            return "".join(chunks)
+        return str(content)
+
+    if isinstance(completion, list):
+        # Common shape: [{"role":"assistant","content":"..."}]
+        if not completion:
+            return ""
+        return "".join(_completion_to_text(item) for item in completion)
+
+    return str(completion)
 
 
 # ─────────────────────────────────────────────
@@ -219,28 +193,17 @@ def reward_fn(prompts, completions, **kwargs):
         raw_task_ids = [raw_task_ids]
 
     for i, (prompt, completion) in enumerate(zip(prompts, completions)):
-        if raw_task_ids:
-            task_id = raw_task_ids[i % len(raw_task_ids)]
-        else:
-            # Last-resort fallback should not pin all rewards to one scenario.
-            task_id = f"fallback_{i}"
-        _scenario_hits[task_id] += 1
+        task_id = (
+            raw_task_ids[i]
+            if i < len(raw_task_ids)
+            else "easy_s001"
+        )
 
         # ── Extract text from completion ──────────────────────────
-        if isinstance(completion, list):
-            # Standard TRL format: [{"role": "assistant", "content": "..."}]
-            text = completion[0].get("content", "") if completion else ""
-        elif isinstance(completion, dict):
-            text = completion.get("content", "")
-        else:
-            text = str(completion)
+        text = _completion_to_text(completion)
 
         # ── FIX 1: robust JSON parse ──────────────────────────────
         action = _extract_json(text)
-        recovered = False
-        if action is None:
-            action = _recover_action_from_text(text)
-            recovered = action is not None
 
         if action is None:
             # Complete parse failure — 0.001 (not 0.0, avoids GRPO div-by-zero)
@@ -253,10 +216,7 @@ def reward_fn(prompts, completions, **kwargs):
         # the right actions, avoiding the all-zero gradient problem.
         if not _is_valid_action(action):
             # JSON parsed but action_type is wrong/missing
-            print(
-                f"  [REWARD] scenario={task_id} | action={action.get('action_type', 'unknown')} "
-                f"| INVALID ACTION STRUCTURE | score=0.05"
-            )
+            print(f"  [REWARD] scenario={task_id} | INVALID ACTION | score=0.05")
             rewards.append(0.05)
             continue
 
@@ -270,17 +230,11 @@ def reward_fn(prompts, completions, **kwargs):
             resp.raise_for_status()
             score = float(resp.json().get("score", 0.001))
             score = max(0.001, min(0.999, score))
+            print(f"  [REWARD] scenario={task_id} | action={action['action_type']} | score={score:.3f}")
             rewards.append(score)
-            delta_reward = score - _last_reward_by_task.get(task_id, score)
-            _last_reward_by_task[task_id] = score
-            parse_tag = "RECOVERED" if recovered else "JSON_OK"
-            print(
-                f"  [REWARD] scenario={task_id} | action={action['action_type']} | {parse_tag} "
-                f"| score={score:.3f} | delta_reward={delta_reward:+.3f}"
-            )
 
         except requests.exceptions.Timeout:
-            print(f"  [REWARD] scenario={task_id} | grader TIMEOUT | score=0.05")
+            print(f"  [REWARD] scenario={task_id} | GRADER TIMEOUT | score=0.05")
             rewards.append(0.05)   # grader timed out — give format credit
         except Exception as e:
             print(f"[reward_fn] grader call failed for {task_id}: {e}")
@@ -377,8 +331,6 @@ def reward_wrapper(prompts, completions, **kwargs):
 # ─────────────────────────────────────────────
 
 def train():
-    _configure_warning_filters()
-
     if not UNSLOTH_AVAILABLE:
         print("Cannot train — Unsloth not installed")
         print("Run: pip install 'unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git' trl transformers datasets accelerate")
@@ -416,18 +368,20 @@ def train():
     )
 
     # Build dataset
-    dataset = build_dataset().shuffle(seed=42)
+    dataset = build_dataset()
 
     # GRPO config
+    # Avoid generation warnings from simultaneously using max_length and max_new_tokens.
+    if hasattr(model, "generation_config"):
+        model.generation_config.max_length = None
+
     config = GRPOConfig(
         output_dir                  = OUTPUT_DIR,
-        # Set explicit optimizer steps so "Total steps" is predictable.
-        max_steps                   = MAX_STEPS,
-        num_train_epochs            = 100,      # ignored when max_steps is reached first
+        num_train_epochs            = 100,      # was 3  → now 100 → gives ~120 steps
         per_device_train_batch_size = 1,        # was 2  → frees memory for 1.5B
         gradient_accumulation_steps = 2,        # was 8  → was hiding steps, now shows them
         learning_rate               = 2e-5,     # was 5e-5 → lower = more stable for small model
-        max_completion_length       = 512,
+        max_completion_length       = 120,
         num_generations             = 4,
         logging_steps               = 1,        # was 10 → see every step
         save_steps                  = 20,
@@ -444,7 +398,6 @@ def train():
     )
 
     print("🏋️  Starting GRPO training...")
-    print(f"   Target optimizer steps: {MAX_STEPS}")
     print("   Expected reward progression:")
     print("   Steps  10: ~0.05-0.15 (model still outputting free text)")
     print("   Steps  50: ~0.20-0.35 (learning JSON format)")
