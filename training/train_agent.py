@@ -2,10 +2,16 @@
 training/train_agent.py — SQL Database Engineer Agent
 Unsloth + GRPO training script.
 Run on venue GPU (April 25-26) with compute credits.
-ENV_URL points to live HF Space environment.
+
+FIXES applied:
+  1. Robust JSON extraction via regex (kills PARSE FALLBACK)
+  2. task_id from kwargs directly — not from kwargs["batch"] (kills only-easy_s001)
+  3. Reward calls /grader (stateless) instead of /reset+/step (kills race condition + flat 0.500)
+  4. Format bonus so valid JSON gets non-zero reward even before agent learns DBA actions
 """
 
 import os
+import re
 import json
 import requests
 from datasets import Dataset
@@ -28,55 +34,168 @@ HF_TOKEN   = os.getenv("HF_TOKEN",  "")
 MODEL_NAME = os.getenv("MODEL_NAME", "unsloth/Qwen2.5-7B-Instruct")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./sdea-trained")
 
-SYSTEM_PROMPT = """You are a senior database engineer. 
-Given the current database state with slow queries, choose the BEST action to improve performance.
-Think step by step:
-1. If you haven't inspected queries yet → use inspect_query
-2. If you haven't analyzed indexes → use analyze_indexes  
-3. If you know which index is missing → use create_index
-4. If query can be rewritten better → use rewrite_query
-5. If table is huge (1M+ rows) → use partition_table
-6. When performance target is reached → use submit_report
+# Valid Round 2 action types — model must use one of these
+VALID_ACTION_TYPES = {
+    "inspect_query", "analyze_indexes", "create_index",
+    "rewrite_query", "add_column", "drop_index",
+    "partition_table", "analyze_statistics",
+    "request_hint", "submit_report",
+}
 
-Respond with JSON only — no explanation, no markdown:
-{"action_type": "...", "payload": {...}}"""
+SYSTEM_PROMPT = """You are a senior database engineer.
+Given a database scenario with slow queries, choose the BEST single action to improve performance.
+
+Investigation pattern (follow this order):
+1. Use inspect_query to understand WHY a query is slow (scan type, rows examined)
+2. Use analyze_indexes to see what indexes exist and what is missing
+3. Use create_index to add the missing index on WHERE/JOIN columns
+4. Use rewrite_query if the SQL itself is inefficient
+5. Use partition_table for tables with 1M+ rows and range queries
+6. Use submit_report when performance target is reached
+
+RESPOND WITH VALID JSON ONLY. No explanation. No markdown. No preamble.
+Examples:
+{"action_type": "inspect_query", "payload": {"query_id": "q1"}}
+{"action_type": "analyze_indexes", "payload": {"table": "users"}}
+{"action_type": "create_index", "payload": {"table": "users", "columns": ["email"]}}
+{"action_type": "create_index", "payload": {"table": "orders", "columns": ["user_id", "status"]}}
+{"action_type": "submit_report", "payload": {"summary": "Added composite index on orders(user_id, status). Performance improved from 5.0 to 85.0."}}"""
 
 
 # ─────────────────────────────────────────────
-#  REWARD FUNCTION (calls live HF Space)
+#  JSON EXTRACTION  (FIX 1 — kills PARSE FALLBACK)
+# ─────────────────────────────────────────────
+
+def _extract_json(text: str) -> dict | None:
+    """
+    Robustly extract a JSON object from model output.
+    Handles: pure JSON, markdown blocks, JSON buried in text, partial JSON.
+    Returns parsed dict or None if nothing parseable found.
+    """
+    if not text:
+        return None
+
+    # Strip common markdown wrappers
+    text = text.strip()
+    text = re.sub(r"```(?:json)?", "", text).replace("```", "").strip()
+
+    # Try 1: entire text is valid JSON
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict) and "action_type" in obj:
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    # Try 2: find outermost {...} block using regex (handles extra text around JSON)
+    matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', text, re.DOTALL)
+    for m in matches:
+        try:
+            obj = json.loads(m)
+            if isinstance(obj, dict) and "action_type" in obj:
+                return obj
+        except json.JSONDecodeError:
+            continue
+
+    # Try 3: greedy — find first { to last }
+    start = text.find("{")
+    end   = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            obj = json.loads(text[start:end + 1])
+            if isinstance(obj, dict) and "action_type" in obj:
+                return obj
+        except json.JSONDecodeError:
+            pass
+
+    return None
+
+
+def _is_valid_action(action: dict) -> bool:
+    """Check action has correct structure before sending to /grader."""
+    if not isinstance(action, dict):
+        return False
+    if "action_type" not in action:
+        return False
+    if action["action_type"] not in VALID_ACTION_TYPES:
+        return False
+    if "payload" not in action or not isinstance(action.get("payload"), dict):
+        return False
+    return True
+
+
+# ─────────────────────────────────────────────
+#  REWARD FUNCTION  (FIX 2 + FIX 3)
 # ─────────────────────────────────────────────
 
 def reward_fn(prompts, completions, **kwargs):
     """
-    GRPO reward function — calls /step on live environment.
-    Returns list of float rewards, one per completion.
+    GRPO reward function — calls /grader (STATELESS).
+
+    FIX 2: task_ids from kwargs["task_id"] directly (TRL passes dataset
+            columns as direct kwargs, NOT inside a "batch" key).
+
+    FIX 3: calls /grader instead of /reset + /step.
+            /grader is stateless — no race condition, no global env mutation,
+            no flat reward from concurrent resets overwriting each other.
     """
-    rewards = []
-    task_ids = kwargs.get("task_ids", ["easy_s001"] * len(prompts))
+    rewards  = []
+
+    # ── FIX 2: correct task_id extraction ────────────────────────
+    # TRL GRPO passes dataset columns directly as kwargs.
+    # With num_generations=4, each task_id is repeated 4x in the list.
+    raw_task_ids = kwargs.get("task_id", [])
+    if isinstance(raw_task_ids, str):
+        raw_task_ids = [raw_task_ids]
 
     for i, (prompt, completion) in enumerate(zip(prompts, completions)):
+        task_id = (
+            raw_task_ids[i]
+            if i < len(raw_task_ids)
+            else "easy_s001"
+        )
+
+        # ── Extract text from completion ──────────────────────────
+        if isinstance(completion, list):
+            # Standard TRL format: [{"role": "assistant", "content": "..."}]
+            text = completion[0].get("content", "") if completion else ""
+        elif isinstance(completion, dict):
+            text = completion.get("content", "")
+        else:
+            text = str(completion)
+
+        # ── FIX 1: robust JSON parse ──────────────────────────────
+        action = _extract_json(text)
+
+        if action is None:
+            # Complete parse failure — 0.001 (not 0.0, avoids GRPO div-by-zero)
+            rewards.append(0.001)
+            continue
+
+        # Format bonus: valid JSON with correct structure = small positive signal
+        # This gives the model SOMETHING to learn from even before it learns
+        # the right actions, avoiding the all-zero gradient problem.
+        if not _is_valid_action(action):
+            # JSON parsed but action_type is wrong/missing
+            rewards.append(0.05)
+            continue
+
+        # ── FIX 3: stateless /grader call ────────────────────────
         try:
-            # Parse action from model output
-            text = completion[0]["content"] if isinstance(completion, list) else str(completion)
-            text = text.strip().replace("```json", "").replace("```", "").strip()
-            action = json.loads(text)
+            resp = requests.post(
+                f"{ENV_URL}/grader",
+                json={"task_id": task_id, "action": action},
+                timeout=20,
+            )
+            resp.raise_for_status()
+            score = float(resp.json().get("score", 0.001))
+            score = max(0.001, min(0.999, score))
+            rewards.append(score)
 
-            # Reset environment for this task
-            task_id = task_ids[i] if i < len(task_ids) else "easy_s001"
-            requests.post(f"{ENV_URL}/reset",
-                json={"task_id": task_id}, timeout=15)
-
-            # Submit action and get reward
-            resp = requests.post(f"{ENV_URL}/step",
-                json=action, timeout=15)
-            data = resp.json()
-            score = data.get("reward", {}).get("score", 0.001)
-            rewards.append(float(score))
-
-        except json.JSONDecodeError:
-            rewards.append(0.001)  # Invalid JSON output
+        except requests.exceptions.Timeout:
+            rewards.append(0.05)   # grader timed out — give format credit
         except Exception as e:
-            print(f"Reward fn error: {e}")
+            print(f"[reward_fn] grader call failed for {task_id}: {e}")
             rewards.append(0.001)
 
     return rewards
@@ -87,46 +206,84 @@ def reward_fn(prompts, completions, **kwargs):
 # ─────────────────────────────────────────────
 
 def build_dataset():
-    """Build training examples from all 15 Round 2 scenarios."""
+    """
+    Build training examples from all Round 2 scenario JSON files.
+    Each example: {"prompt": "...", "task_id": "easy_s001"}.
+    task_id is passed through to reward_fn via kwargs (TRL behaviour).
+    """
     scenarios = []
 
-    # Load all scenario files
-    for fname in ["dataset/easy_scenarios.json",
-                  "dataset/medium_scenarios.json",
-                  "dataset/hard_scenarios.json"]:
+    for fname in [
+        "dataset/easy_scenarios.json",
+        "dataset/medium_scenarios.json",
+        "dataset/hard_scenarios.json",
+    ]:
         try:
             with open(fname) as f:
-                scenarios.extend(json.load(f))
+                loaded = json.load(f)
+                scenarios.extend(loaded)
+                print(f"  Loaded {len(loaded)} scenarios from {fname}")
         except FileNotFoundError:
-            print(f"{fname} not found, skipping")
+            print(f"  {fname} not found, skipping")
 
     if not scenarios:
-        # Fallback: fetch from live environment
-        resp = requests.get(f"{ENV_URL}/tasks", timeout=15)
-        tasks = resp.json().get("tasks", [])
-        scenarios = [{"id": t["id"], "description": t["description"]} for t in tasks]
+        print("  Falling back to /tasks endpoint...")
+        try:
+            resp     = requests.get(f"{ENV_URL}/tasks", timeout=15)
+            tasks    = resp.json().get("tasks", [])
+            scenarios = [{"id": t["id"], "description": t.get("description", "")}
+                         for t in tasks if "_s" in t["id"]]
+        except Exception as e:
+            print(f"  /tasks fallback failed: {e}")
+            # Minimal fallback so training doesn't crash
+            scenarios = [{"id": "easy_s001",
+                          "description": "User lookup query taking 2s. Add index.",
+                          "tables": [{"name": "users", "rows": 10000, "indexes": ["PRIMARY"]}],
+                          "slow_queries": [{"id": "q1", "sql": "SELECT * FROM users WHERE email=?", "avg_ms": 2000}],
+                          "performance_score_baseline": 8.0,
+                          "target_score": 80.0}]
 
     examples = []
     for s in scenarios:
-        prompt = f"""{SYSTEM_PROMPT}
+        tables_txt = json.dumps(s.get("tables", []), separators=(",", ":"))
+        queries_txt = json.dumps(s.get("slow_queries", []), separators=(",", ":"))
+        baseline    = s.get("performance_score_baseline", s.get("performance_score", 0))
+        target      = s.get("target_score", 85)
+        max_steps   = s.get("max_steps", 50)
 
-Current Database State:
-- Scenario: {s.get('id', 'unknown')}
-- Description: {s.get('description', '')}
-- Tables: {json.dumps(s.get('tables', []))}
-- Slow Queries: {json.dumps(s.get('slow_queries', []))}
-- Performance Score: {s.get('performance_score_baseline', 0)} / 100
-- Target Score: {s.get('target_score', 85)}
-
-What is your next action?"""
+        prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"=== DATABASE SCENARIO ===\n"
+            f"Scenario ID: {s.get('id', 'unknown')}\n"
+            f"Description: {s.get('description', '')}\n"
+            f"Tables: {tables_txt}\n"
+            f"Slow Queries: {queries_txt}\n"
+            f"Current Performance Score: {baseline} / 100\n"
+            f"Target Performance Score: {target} / 100\n"
+            f"Step Budget: {max_steps}\n\n"
+            f"What is your FIRST action?"
+        )
 
         examples.append({
-            "prompt":   prompt,
-            "task_id":  s.get("id", "easy_s001"),
+            "prompt":  prompt,
+            "task_id": s.get("id", "easy_s001"),
         })
 
-    print(f"Built {len(examples)} training examples")
+    print(f"Built {len(examples)} training examples from {len(scenarios)} scenarios")
     return Dataset.from_list(examples)
+
+
+# ─────────────────────────────────────────────
+#  REWARD WRAPPER  (FIX 2 continued)
+# ─────────────────────────────────────────────
+
+def reward_wrapper(prompts, completions, **kwargs):
+    """
+    Thin wrapper — passes kwargs straight through.
+    TRL GRPO sends dataset columns (including task_id) as direct kwargs.
+    DO NOT use kwargs.get("batch") — that key does not exist in TRL GRPO.
+    """
+    return reward_fn(prompts, completions, **kwargs)
 
 
 # ─────────────────────────────────────────────
@@ -136,11 +293,19 @@ What is your next action?"""
 def train():
     if not UNSLOTH_AVAILABLE:
         print("Cannot train — Unsloth not installed")
-        print("Run: pip install unsloth trl transformers datasets accelerate")
+        print("Run: pip install 'unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git' trl transformers datasets accelerate")
         return
 
     print(f"🚀 Loading model: {MODEL_NAME}")
-    print(f"🌐 Environment: {ENV_URL}")
+    print(f"🌐 Environment:   {ENV_URL}")
+
+    # Sanity check — make sure environment is reachable
+    try:
+        r = requests.get(f"{ENV_URL}/health", timeout=10)
+        print(f"✅ Environment health: {r.json()}")
+    except Exception as e:
+        print(f"⚠️  Cannot reach environment at {ENV_URL}: {e}")
+        print("   Training will likely fail — check ENV_URL")
 
     # Load model with Unsloth 4-bit quantization
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -174,33 +339,34 @@ def train():
         learning_rate               = 5e-5,
         max_completion_length       = 256,
         num_generations             = 4,
-        logging_steps               = 10,
+        logging_steps               = 5,
         save_steps                  = 50,
         warmup_ratio                = 0.1,
         report_to                   = "none",
     )
 
-    # Reward function wrapper
-    def reward_wrapper(prompts, completions, **kwargs):
-        task_ids = [ex.get("task_id", "easy_s001") for ex in kwargs.get("batch", [])]
-        return reward_fn(prompts, completions, task_ids=task_ids)
-
-    # Train
     trainer = GRPOTrainer(
-        model        = model,
-        tokenizer    = tokenizer,
-        reward_funcs = reward_wrapper,
-        args         = config,
+        model         = model,
+        tokenizer     = tokenizer,
+        reward_funcs  = reward_wrapper,
+        args          = config,
         train_dataset = dataset,
     )
 
     print("🏋️  Starting GRPO training...")
+    print("   Expected reward progression:")
+    print("   Steps  10: ~0.05-0.15 (model still outputting free text)")
+    print("   Steps  50: ~0.20-0.35 (learning JSON format)")
+    print("   Steps 100: ~0.35-0.50 (learning correct action types)")
+    print("   Steps 200: ~0.55-0.70 (learning DBA investigation pattern)")
+    print("   Steps 300: ~0.70-0.82 (strategic multi-action planning)")
+
     trainer.train()
 
     # Save
     model.save_pretrained(f"{OUTPUT_DIR}/final")
     tokenizer.save_pretrained(f"{OUTPUT_DIR}/final")
-    print(f"Training complete. Model saved to {OUTPUT_DIR}/final")
+    print(f"✅ Training complete. Model saved to {OUTPUT_DIR}/final")
 
 
 if __name__ == "__main__":
