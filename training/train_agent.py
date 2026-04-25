@@ -15,6 +15,7 @@ import re
 import json
 import requests
 from datasets import Dataset
+from collections import defaultdict
 
 # ── Try importing Unsloth (GPU only) ─────────────────────────
 try:
@@ -41,6 +42,9 @@ VALID_ACTION_TYPES = {
     "partition_table", "analyze_statistics",
     "request_hint", "submit_report",
 }
+
+_last_reward_by_task = {}
+_scenario_hits = defaultdict(int)
 
 SYSTEM_PROMPT = """You are a senior database engineer.
 Given a database scenario with slow queries, choose the BEST single action to improve performance.
@@ -87,14 +91,16 @@ def _extract_json(text: str) -> dict | None:
     except json.JSONDecodeError:
         pass
 
-    # Try 2: find outermost {...} block using regex (handles extra text around JSON)
-    matches = re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', text, re.DOTALL)
-    for m in matches:
+    # Try 2: scan for JSON object starts and raw-decode from each "{"
+    # This handles nested objects/arrays better than regex-only extraction.
+    decoder = json.JSONDecoder()
+    brace_positions = [m.start() for m in re.finditer(r"\{", text)]
+    for pos in brace_positions:
         try:
-            obj = json.loads(m)
+            obj, _ = decoder.raw_decode(text[pos:])
             if isinstance(obj, dict) and "action_type" in obj:
                 return obj
-        except json.JSONDecodeError:
+        except Exception:
             continue
 
     # Try 3: greedy — find first { to last }
@@ -109,6 +115,52 @@ def _extract_json(text: str) -> dict | None:
             pass
 
     return None
+
+
+def _recover_action_from_text(text: str) -> dict | None:
+    """
+    Heuristic fallback when strict JSON parse fails.
+    Helps GRPO get useful gradient instead of all-invalid outputs.
+    """
+    if not text:
+        return None
+
+    action_match = re.search(
+        r"(inspect_query|analyze_indexes|create_index|rewrite_query|add_column|drop_index|partition_table|analyze_statistics|request_hint|submit_report)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not action_match:
+        return None
+
+    action_type = action_match.group(1).lower()
+    payload = {}
+
+    query_match = re.search(r"\bq\d+\b", text, flags=re.IGNORECASE)
+    table_match = re.search(
+        r"\b(users|orders|products|sessions|logs|tickets|events|posts|authors|transactions|accounts|customers|audit_log|workspaces|projects|tasks|comments|attachments|activity_log|notifications|patients|appointments|prescriptions|clinical_notes|players|matches|leaderboards|achievements|shipments|routes|drivers|vehicles|warehouses|tracking)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    cols_match = re.search(r"\[(.*?)\]", text, flags=re.DOTALL)
+
+    if action_type == "inspect_query":
+        payload["query_id"] = query_match.group(0) if query_match else "q1"
+    elif action_type in {"analyze_indexes", "partition_table", "analyze_statistics"}:
+        payload["table"] = table_match.group(1) if table_match else "orders"
+    elif action_type == "create_index":
+        payload["table"] = table_match.group(1) if table_match else "orders"
+        if cols_match:
+            cols = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", cols_match.group(1))
+            payload["columns"] = cols[:4] if cols else ["user_id", "status"]
+        else:
+            payload["columns"] = ["user_id", "status"]
+    elif action_type == "submit_report":
+        payload["summary"] = "Applied index and query optimization recommendations."
+    else:
+        payload = {}
+
+    return {"action_type": action_type, "payload": payload}
 
 
 def _is_valid_action(action: dict) -> bool:
@@ -149,11 +201,12 @@ def reward_fn(prompts, completions, **kwargs):
         raw_task_ids = [raw_task_ids]
 
     for i, (prompt, completion) in enumerate(zip(prompts, completions)):
-        task_id = (
-            raw_task_ids[i]
-            if i < len(raw_task_ids)
-            else "easy_s001"
-        )
+        if raw_task_ids:
+            task_id = raw_task_ids[i % len(raw_task_ids)]
+        else:
+            # Last-resort fallback should not pin all rewards to one scenario.
+            task_id = f"fallback_{i}"
+        _scenario_hits[task_id] += 1
 
         # ── Extract text from completion ──────────────────────────
         if isinstance(completion, list):
@@ -166,9 +219,14 @@ def reward_fn(prompts, completions, **kwargs):
 
         # ── FIX 1: robust JSON parse ──────────────────────────────
         action = _extract_json(text)
+        recovered = False
+        if action is None:
+            action = _recover_action_from_text(text)
+            recovered = action is not None
 
         if action is None:
             # Complete parse failure — 0.001 (not 0.0, avoids GRPO div-by-zero)
+            print(f"  [REWARD] scenario={task_id} | INVALID JSON | score=0.001")
             rewards.append(0.001)
             continue
 
@@ -177,6 +235,10 @@ def reward_fn(prompts, completions, **kwargs):
         # the right actions, avoiding the all-zero gradient problem.
         if not _is_valid_action(action):
             # JSON parsed but action_type is wrong/missing
+            print(
+                f"  [REWARD] scenario={task_id} | action={action.get('action_type', 'unknown')} "
+                f"| INVALID ACTION STRUCTURE | score=0.05"
+            )
             rewards.append(0.05)
             continue
 
@@ -191,8 +253,16 @@ def reward_fn(prompts, completions, **kwargs):
             score = float(resp.json().get("score", 0.001))
             score = max(0.001, min(0.999, score))
             rewards.append(score)
+            delta_reward = score - _last_reward_by_task.get(task_id, score)
+            _last_reward_by_task[task_id] = score
+            parse_tag = "RECOVERED" if recovered else "JSON_OK"
+            print(
+                f"  [REWARD] scenario={task_id} | action={action['action_type']} | {parse_tag} "
+                f"| score={score:.3f} | delta_reward={delta_reward:+.3f}"
+            )
 
         except requests.exceptions.Timeout:
+            print(f"  [REWARD] scenario={task_id} | grader TIMEOUT | score=0.05")
             rewards.append(0.05)   # grader timed out — give format credit
         except Exception as e:
             print(f"[reward_fn] grader call failed for {task_id}: {e}")
@@ -326,7 +396,7 @@ def train():
     )
 
     # Build dataset
-    dataset = build_dataset()
+    dataset = build_dataset().shuffle(seed=42)
 
     # GRPO config
     config = GRPOConfig(
