@@ -333,15 +333,15 @@ def train():
     # GRPO config
     config = GRPOConfig(
         output_dir                  = OUTPUT_DIR,
-        num_train_epochs            = 3,
-        per_device_train_batch_size = 2,
-        gradient_accumulation_steps = 8,
-        learning_rate               = 5e-5,
+        num_train_epochs            = 100,      # was 3  → now 100 → gives ~120 steps
+        per_device_train_batch_size = 1,        # was 2  → frees memory for 1.5B
+        gradient_accumulation_steps = 2,        # was 8  → was hiding steps, now shows them
+        learning_rate               = 2e-5,     # was 5e-5 → lower = more stable for small model
         max_completion_length       = 256,
         num_generations             = 4,
-        logging_steps               = 5,
-        save_steps                  = 50,
-        warmup_ratio                = 0.1,
+        logging_steps               = 1,        # was 10 → see every step
+        save_steps                  = 20,
+        warmup_steps                = 10,       # was warmup_ratio (deprecated)
         report_to                   = "none",
     )
 
