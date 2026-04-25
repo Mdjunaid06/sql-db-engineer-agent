@@ -252,17 +252,15 @@ def build_dataset():
         max_steps   = s.get("max_steps", 50)
 
         prompt = (
-            f"{SYSTEM_PROMPT}\n\n"
-            f"=== DATABASE SCENARIO ===\n"
-            f"Scenario ID: {s.get('id', 'unknown')}\n"
-            f"Description: {s.get('description', '')}\n"
-            f"Tables: {tables_txt}\n"
-            f"Slow Queries: {queries_txt}\n"
-            f"Current Performance Score: {baseline} / 100\n"
-            f"Target Performance Score: {target} / 100\n"
-            f"Step Budget: {max_steps}\n\n"
-            f"What is your FIRST action?"
-        )
+        f"{SYSTEM_PROMPT}\n\n"
+        f"Scenario: {s.get('id')} — {s.get('description','')}\n"
+        f"Slow queries: {', '.join(q['id'] for q in s.get('slow_queries',[]))}\n"
+        f"Tables: {', '.join(t['name'] for t in s.get('tables',[]))}\n"
+        f"Missing indexes: {json.dumps(s.get('missing_index_hints',[]))}\n"
+        f"Performance: {baseline}/100 → target {target}/100\n\n"
+        f"Respond with JSON only:"
+    )
+
 
         examples.append({
             "prompt":  prompt,
@@ -337,7 +335,7 @@ def train():
         per_device_train_batch_size = 1,        # was 2  → frees memory for 1.5B
         gradient_accumulation_steps = 2,        # was 8  → was hiding steps, now shows them
         learning_rate               = 2e-5,     # was 5e-5 → lower = more stable for small model
-        max_completion_length       = 256,
+        max_completion_length       = 512,
         num_generations             = 4,
         logging_steps               = 1,        # was 10 → see every step
         save_steps                  = 20,
