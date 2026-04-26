@@ -13,9 +13,14 @@ pytest==9.0.2
 openenv-core>=0.2.0
 
 # ── Round 2: Training pipeline ────────────────────────────
+gradio==6.13.0
 matplotlib>=3.7.0
 requests>=2.31.0
 datasets>=2.14.0
+numpy>=1.26.0
+Pillow>=10.0.0
+
+aiofiles
 
 # ── Round 2: Training (GPU only — venue machine) ──────────
 # Install these ONLY on venue GPU machine:

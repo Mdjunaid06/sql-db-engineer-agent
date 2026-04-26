@@ -171,9 +171,12 @@ Try the agent yourself — pick a scenario difficulty, choose between the traine
 
 | Resource | Link |
 |----------|------|
-|  Model weights | [YOUR_USERNAME/sql-db-engineer-grpo](https://huggingface.co/YOUR_USERNAME/sql-db-engineer-grpo) |
-|  Demo Space | [YOUR_USERNAME/sql-db-engineer-demo](https://huggingface.co/spaces/YOUR_USERNAME/sql-db-engineer-demo) |
-|  Source code | [GitHub / HF Repo](https://huggingface.co/spaces/YOUR_USERNAME/sql-db-engineer-agent) |
+| Demo Space  |https://huggingface.co/spaces/junaid0600/sql-db-agent-demo-ui |
+|             |
+| Source code | GitHub Repo - https://github.com/Mdjunaid06/sql-db-engineer-agent |
+|             | HF Repo - https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/tree/main |
+|             |
+|Training Run Notebook URL| https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/blob/main/SDEA_Training_Notebook.ipynb 
 
 ---
 
