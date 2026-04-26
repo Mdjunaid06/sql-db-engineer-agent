@@ -39,7 +39,7 @@ from env.db_simulator import DatabaseSimulator
 # ── Config ────────────────────────────────────────────────────
 ENV_URL    = os.getenv("ENV_URL",    "https://junaid0600-sql-db-engineer-agent.hf.space")
 HF_TOKEN   = os.getenv("HF_TOKEN",  "")
-MODEL_NAME = os.getenv("MODEL_NAME", "unsloth/Qwen2.5-1.5B-Instruct")
+MODEL_NAME = os.getenv("MODEL_NAME", "unsloth/Qwen2.5-7B-Instruct")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./sdea-trained")
 MAX_STEPS  = int(os.getenv("MAX_STEPS", "100"))
 
