@@ -34,8 +34,8 @@ An OpenEnv-compliant reinforcement learning environment where AI agents learn to
 |  **Training Notebook** | https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/blob/main/SDEA_Training_Notebook.ipynb |
 |   **Google Collab**    | https://colab.research.google.com/drive/1dTRcnVb9VotCFUnGeZSacaznb4fn_PD7?usp=sharing |
 |  **Blog Post** | https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/blob/main/blog_post.md |
-|  **Source Code** | [HF Space]  | https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/tree/main |
-|                  | [Git Repo] | https://github.com/Mdjunaid06/sql-db-engineer-agent |
+| *Source Code (HF Space)* | https://huggingface.co/spaces/junaid0600/sql-db-engineer-agent/tree/main |
+| *Source Code (GitHub)* | https://github.com/Mdjunaid06/sql-db-engineer-agent |
 ---
 
 ## From Round 1 → Round 2
