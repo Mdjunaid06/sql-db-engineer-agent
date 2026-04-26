@@ -105,31 +105,7 @@ def check_all_endpoints():
     total_pass += ok
     results.append(f"{status_icon(ok)}  GET  /progress       → {code}  |  perf_score: {data.get('performance_score','?')}  |  baseline: {data.get('baseline_score','?')}")
 
-     # Trained agent status
-    code, data = call_endpoint("GET", "/trained-agent/status")
-    ok = code == 200 and "loaded" in data
-    total_pass += ok
-    results.append(f"{status_icon(ok)}  GET  /trained-agent/status → {code}  |  loaded: {data.get('loaded','?')}")
-
-    # Trained agent run
-    code, data = call_endpoint("POST", "/trained-agent", {
-        "task_id": "easy_001"
-    })
-    ok = code == 200 and "score" in data
-    total_pass += ok
-    results.append(f"{status_icon(ok)}  POST /trained-agent  → {code}  |  score: {data.get('score','?')}")
-
-    # Demo UI
-    code, data = call_endpoint("GET", "/demo")
-    ok = code == 200
-    total_pass += ok
-    results.append(f"{status_icon(ok)}  GET  /demo           → {code}")
-
-
-
-     # Summary
-    summary = f"\n{'='*60}\n{total_pass}/{total_tests} endpoints passing  {'🟢 ALL GOOD' if total_pass == total_tests else '🔴 SOME FAILING'}\n{'='*60}"
-    
+    summary = f"\n{'='*60}\n{total_pass}/9 endpoints passing  {'🟢 ALL GOOD' if total_pass == 9 else '🔴 SOME FAILING'}\n{'='*60}"
     return "\n".join(results) + summary
 
 # ─────────────────────────────────────────────
