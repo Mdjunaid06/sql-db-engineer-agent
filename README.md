@@ -273,9 +273,6 @@ The environment gets harder as the agent gets smarter. **Genuine adaptive curric
 | `/grader` | POST | Grade an episode → float score |
 | `/baseline` | POST | Run baseline agent → scores |
 | `/progress` | GET | DB performance history + milestones |
-| `/trained-agent` | POST | Run trained GRPO agent → steps + score |
-| `/trained-agent/status` | GET | Check if trained model is loaded |
-| `/demo` | GET | Live HTML demo UI |
 
 ---
 
