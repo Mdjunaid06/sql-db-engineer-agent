@@ -469,5 +469,3 @@ def train():
 
 if __name__ == "__main__":
     train()
-    model.push_to_hub("junaid0600/sql-db-engineer-grpo", token=HF_TOKEN)
-    tokenizer.push_to_hub("junaid0600/sql-db-engineer-grpo", token=HF_TOKEN)
